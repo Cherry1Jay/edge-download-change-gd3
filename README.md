@@ -37,7 +37,7 @@
 **没有 http/https 的 `VIEW` 过滤器**。而「自定义包名」固定用 `ACTION_VIEW` 投递，所以对 GD3 必然找不到
 可接收的 Activity，最终静默回退到系统下载器。
 
-改动共两处，且两个坑都是踩出来的：
+改动共三处，且三个坑都是踩出来的：
 
 ```java
 // lsp_module/src/.../Downloaders.java —— 注册下载目标（显式组件 + SEND）
@@ -58,6 +58,42 @@ new Entry("ghostdl", "Ghost Downloader", "com.xychr.ghostdownloader", MODE_SEND_
 
 实际效果（真机核对）：GD3 打开「新建下载」，链接已填入并完成 PROBE，显示 `vue.global.js / 128.0 KB`、
 目标目录与线程数。
+
+### 第三个坑：设置同步（Edge 读不到你选的下载器）
+
+| 现象 | 原因 |
+|---|---|
+| 模块里明明选了 Ghost Downloader，Edge 的确认弹窗却写着「将交给 **系统下载器**」，下载最终走系统 DownloadManager | 注入代码跑在 Edge 进程里，原本要去**拉**模块 App 的设置，但 Android 11+ 包可见性让它连模块的 ContentProvider / Service 都解析不到；LSPosed 的 `getRemotePreferences` 又要求模块 App 的 prefs 被重定向到 `/data/adb/lspd/prefs`，本机并没有发生 |
+
+实测证据：在 Edge 进程里做诊断，显式组件的 `resolveService(module) = null`、`bindService` 返回 `false`，
+系统日志是 `Can't resolve content provider ... caller is com.microsoft.emmx`——而同一时刻
+`resolveActivity(GD3 显式组件)` 正常，所以**交接本身没问题，坏的是设置通道**。
+
+改法：把方向反过来，模块 App **推**、Edge 收。
+
+```xml
+<!-- lsp_module/AndroidManifest.xml —— 让模块 App 能看见 Edge（发送方也要可见性） -->
+<package android:name="com.microsoft.emmx" />
+```
+
+- 模块 App 每次改设置、每次打开界面（`onResume`）都发一条带 action 的广播，直达 `com.microsoft.emmx`；
+- Edge 侧注册接收器，收到即应用，并写进**自己的** `shared_prefs/edge_download_change_cache.xml`；
+- 冷启动直接读这份缓存，**完全不需要跨进程调用**；provider / remote prefs 保留为尽力而为的补充。
+
+真机日志链路：
+
+```
+模块端  settings pushed: ghostdl
+Edge 端 settings pushed by module app: ghostdl
+落盘    /data/data/com.microsoft.emmx/shared_prefs/edge_download_change_cache.xml → downloader=ghostdl
+```
+
+> 注意：换签名重装模块后，LSPosed 的模块登记会被一并清掉。`lspctl`（LSPosed 2.2+ 开发者模式）可以在**不重启**的
+> 前提下补回来：
+> ```bash
+> su -c '/data/adb/modules/zygisk_lsposed/lspctl module enable --user=0 io.github.lswlc33.edge_download_change'
+> su -c '/data/adb/modules/zygisk_lsposed/lspctl scope add --user=0 io.github.lswlc33.edge_download_change com.microsoft.emmx'
+> ```
 
 > 使用前提：**Ghost Downloader 3 已安装**（Android 9+ / arm64-v8a，项目：[XiaoYouChR/Ghost-Downloader-3](https://github.com/XiaoYouChR/Ghost-Downloader-3)）。
 > 交接后 GD3 会打开「新建任务」并自动解析链接（它自己会做 PROBE 请求补全文件名/大小），确认后开始下载。
