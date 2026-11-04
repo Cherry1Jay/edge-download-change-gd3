@@ -22,7 +22,7 @@
 
 ## 本衍生版改了什么
 
-只有一处功能改动：**新增 Ghost Downloader 3 作为下载目标**（`com.xychr.ghostdownloader`）。
+功能改动两处：**新增 Ghost Downloader 3 作为下载目标**（`com.xychr.ghostdownloader`），以及**把设置同步改成「模块推、Edge 收」**（否则弹窗永远回退系统下载器，见下文第三个坑）。
 
 | 项目 | 上游行为 | 本衍生版 |
 |---|---|---|
