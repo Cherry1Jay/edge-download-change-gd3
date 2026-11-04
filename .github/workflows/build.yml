@@ -1,0 +1,61 @@
+name: Build APK
+
+# Fork-safe build only. This workflow NEVER publishes upstream:
+#   - no push to Xposed-Modules-Repo/io.github.lswlc33.edge_download_change
+#   - no automatic version bump / commit back to the repo
+# It builds the module APK and uploads it as a workflow artifact.
+# Pushing a tag (e.g. 16-2.12-gd3.1) additionally attaches the APK to a release
+# of THIS repository only.
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Ensure Android platform and build-tools
+        run: |
+          echo "sdk root: ${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" | tail -3
+
+      - name: Build and sign
+        env:
+          # Set this secret to keep a stable signature across CI builds.
+          # Without it a throwaway key is generated and the APK will NOT install
+          # over a previous build.
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$SIGNING_KEYSTORE_BASE64" ]; then
+            echo "::warning::SIGNING_KEYSTORE_BASE64 secret is not set - a throwaway key will be used, the APK will not install over existing builds."
+          fi
+          bash lsp_module/build.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: edge_download_change-apk
+          path: lsp_module/edge_download_change-*.apk
+
+      - name: Attach APK to release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: lsp_module/edge_download_change-*.apk
+          body: |
+            Unofficial fork build. Upstream: https://github.com/lswlc33/edge_download_change
+            See the README's "License & Disclaimer" section before installing.

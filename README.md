@@ -1,16 +1,66 @@
-# edge_download_change
+# edge_download_change（Ghost Downloader 衍生版）
 
-[![Nightly](https://github.com/lswlc33/edge_download_change/actions/workflows/nightly.yml/badge.svg)](https://github.com/lswlc33/edge_download_change/actions/workflows/nightly.yml)
-[![Release](https://github.com/lswlc33/edge_download_change/actions/workflows/release.yml/badge.svg)](https://github.com/lswlc33/edge_download_change/actions/workflows/release.yml)
-[![Latest release](https://img.shields.io/github/v/release/lswlc33/edge_download_change?display_name=tag)](https://github.com/lswlc33/edge_download_change/releases/latest)
+> ## ⚠️ 非官方衍生版本 / UNOFFICIAL FORK
+>
+> **本仓库不是上游项目，也不是上游发布的 APK。**
+>
+> - 上游项目：[`lswlc33/edge_download_change`](https://github.com/lswlc33/edge_download_change)，作者 **[雪中明月](https://github.com/lswlc33)**
+> - 本仓库相对上游**只增加了一处功能**：把 **Ghost Downloader 3** 加入可选下载目标（见 [本衍生版改了什么](#本衍生版改了什么)）
+> - 其余全部代码、架构、文案、分析脚本均来自上游，版权归上游作者所有
+> - **上游仓库没有 LICENSE 文件**（未声明任何开源许可，即默认保留所有权利）。因此本仓库**不主张、也无法授予任何许可**，
+>   仅作为个人学习/自用目的的衍生修改而存在。详见 [许可与免责声明](#许可与免责声明)
 
 把 **Microsoft Edge for Android**（`com.microsoft.emmx`）的下载确认弹窗，换成模块自己的
 **「复制 / 下载」**对话框，并让下载交给**系统下载器**（Android DownloadManager）或你选定的
 **第三方下载器**，而不是 Edge 自带的下载管理器。
 
-> 这是一个 LSPosed 模块（libxposed API 102），已验证 Edge **153.0.4234.49**。
+> 这是一个 LSPosed 模块（libxposed API 102），上游已验证 Edge **153.0.4234.49**。
 > English: [README.en.md](README.en.md) ｜ 开发/原理细节: [lsp_module/README.md](lsp_module/README.md)
 > ｜ hook 目标的推导过程: [analysis/README.md](analysis/README.md)
+
+---
+
+## 本衍生版改了什么
+
+只有一处功能改动：**新增 Ghost Downloader 3 作为下载目标**（`com.xychr.ghostdownloader`）。
+
+| 项目 | 上游行为 | 本衍生版 |
+|---|---|---|
+| Ghost Downloader 3 | 不在下载目标列表里，只能选「自定义包名」——但它走 `ACTION_VIEW`，对 GD3 **无效** | 内置为一级选项 `Ghost Downloader`，选中即生效 |
+| 交接方式 | — | **显式组件 + `ACTION_SEND` + `text/plain`**（与「分享链接到 GD3」同一条通路） |
+
+**为什么不能用「自定义包名」凑合？** 抓 `dumpsys package` 可以看到 GD3 的 `MainActivity` 只声明了两类过滤器：
+
+- `ACTION_SEND` / `text/plain` —— 分享纯文本（用来接链接）
+- `ACTION_VIEW` —— 但只认 `magnet:` / `ed2k:` / `ftp:` / `ftps:` / `content:` 与 m3u8 / dash / torrent 的 MIME
+
+**没有 http/https 的 `VIEW` 过滤器**。而「自定义包名」固定用 `ACTION_VIEW` 投递，所以对 GD3 必然找不到
+可接收的 Activity，最终静默回退到系统下载器。
+
+改动共两处，且两个坑都是踩出来的：
+
+```java
+// lsp_module/src/.../Downloaders.java —— 注册下载目标（显式组件 + SEND）
+new Entry("ghostdl", "Ghost Downloader", "com.xychr.ghostdownloader", MODE_SEND_EXPLICIT,
+        "com.xychr.ghostdownloader.MainActivity"),
+```
+
+```xml
+<!-- lsp_module/AndroidManifest.xml —— Android 11+ 包可见性 -->
+<package android:name="com.xychr.ghostdownloader" />
+```
+
+| 坑 | 现象 | 原因 |
+|---|---|---|
+| 漏 `<queries>` | 选择器显示「Ghost Downloader（**未安装**）」，但 App 明明装着 | Android 11+ 包可见性：`getPackageInfo()` 对未声明的包抛 `NameNotFoundException` |
+| 用「隐式 Intent + `setPackage()`」 | 交接失败并**静默回退**系统下载器 | 隐式 Intent 仍要在**调用方**可见范围内解析；注入代码跑在 Edge 进程，Edge 没有 GD3 的可见性 → `ActivityNotFoundException` |
+| 改用**显式组件** | 稳定命中 | 显式 Intent 直接指向组件，不经隐式解析，不受调用方包可见性影响 |
+
+实际效果（真机核对）：GD3 打开「新建下载」，链接已填入并完成 PROBE，显示 `vue.global.js / 128.0 KB`、
+目标目录与线程数。
+
+> 使用前提：**Ghost Downloader 3 已安装**（Android 9+ / arm64-v8a，项目：[XiaoYouChR/Ghost-Downloader-3](https://github.com/XiaoYouChR/Ghost-Downloader-3)）。
+> 交接后 GD3 会打开「新建任务」并自动解析链接（它自己会做 PROBE 请求补全文件名/大小），确认后开始下载。
 
 ---
 
@@ -23,7 +73,7 @@ Edge 安卓版是个好浏览器，但它的**下载管理器一直比较弱**�
 这个模块适合你，如果你：
 
 - 想把网页下载**交给系统下载器**（通知栏显示进度、系统 Downloads 应用里统一管理）；
-- 装了 **ADM / IDM / 1DM / FDM / Gopeed / Aria2App** 等下载器，希望网页下载直接进它们；
+- 装了 **ADM / IDM / 1DM / FDM / Gopeed / Ghost Downloader 3 / Aria2App** 等下载器，希望网页下载直接进它们；
 - 习惯**先看到真实下载链接**再决定下不下（核对域名、避免误点下载、把链接贴给别人）；
 - 喜欢"**不满意就自己改**"：模块提供了拦截开关、下载目标选择、状态自检和日志；
 - 或者单纯想研究"**Chromium 内核浏览器的下载链路是怎么被接管的**"（`analysis/` 里有完整方法）。
@@ -48,10 +98,15 @@ Edge 安卓版是个好浏览器，但它的**下载管理器一直比较弱**�
 Edge for Android（`com.microsoft.emmx`）。
 
 1. **安装模块**：
-   - **稳定版**：从 [Releases](https://github.com/lswlc33/edge_download_change/releases/latest) 下载最新 APK（tag 形如 `6-2.4`）；
-   - **尝鲜版（beta）**：从 [预发布列表](https://github.com/lswlc33/edge_download_change/releases) 下载最新的 `v2.6-beta.N`（版本号带 `beta`，官方模块仓库会把它归入 beta 通道）；
-   - 或本地构建：`bash lsp_module/build.sh`（产物 `edge_download_change-<版本>.apk`）。
-   两种渠道都用同一把密钥签名，可以互相覆盖安装。
+   - 从本仓库 [Releases](../../releases/latest) 下载 `edge_download_change-<版本>.apk`；
+   - 或本地构建：`ANDROID_SDK_ROOT=<SDK> bash lsp_module/build.sh`（产物 `edge_download_change-<版本>.apk`，
+     需要 JDK 17 + Android SDK build-tools 35 + platform android-35）。
+
+   > ⚠️ **签名不同，必须覆盖安装前先卸载上游版本。**
+   > 上游的 APK 由上游作者的私钥签名，本衍生版由另一把本地密钥签名，两者 `applicationId` 相同但签名不同，
+   > 直接安装会报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`。请先卸载原模块（**会清空模块自己的设置**），
+   > 再安装本版本，然后在 LSPosed 管理器里重新启用本模块并确认作用域为 Edge。
+   > 想回到上游版本同理：卸载本版 → 装回上游 APK。
 2. **启用模块**：在 LSPosed 管理器里启用本模块。作用域 `com.microsoft.emmx` 已由模块**静态声明**，
    多数管理器会自动应用；如果你的管理器不识别静态作用域，请手动勾选 Edge。
 3. **重启 Edge**：**强制停止** Edge（只切后台不算），再重新打开。
@@ -66,7 +121,7 @@ Edge for Android（`com.microsoft.emmx`）。
 6. **按需设置**（模块 App 内）：
    - **开启拦截**：关掉后 Edge 完全恢复原生下载行为；
    - **下载目标**：系统下载器 / ADM / IDM / 1DM / FDM / DVGet / Download Navi / Aria2App /
-     Gopeed / AB DM / FluxDown / 迅雷，或自定义包名；第三方下载器启动失败会自动回退系统下载器；
+     Gopeed / **Ghost Downloader** / AB DM / FluxDown / 迅雷，或自定义包名；第三方下载器启动失败会自动回退系统下载器；
    - **日志**：查看/复制/清空。
 
 **常见问题**
@@ -108,30 +163,27 @@ Edge 是 Chromium 内核，**下载引擎在 native 层**，Java 侧只是桥接
 恢复的历史下载项 URL 为空且 `j=0`，只能用 `j==0 && q==0` 区分"新下载"；
 框架 hook 只保留 `Activity.onResume`（最热路径上的 hook 已移除，降低崩溃风险）。
 
-## 下载与更新
+## 下载与构建
 
-| 渠道 | 内容 | 触发方式 |
+| 渠道 | 内容 | 说明 |
 |---|---|---|
-| **Release（稳定版）** | 稳定版，tag = `版本号-版本名`（官方模块仓库要求的格式） | Actions → **Release** → Run workflow（**版本号可留空，自动 +1**） |
-| **Beta（预发布，官方 beta 通道）** | versionName 形如 `2.6-beta.<运行号>`，官方仓库归入 **beta 通道** | 每次 push 到 `main` 自动 |
-| **LSPosed 仓库** | 通过官方模块仓库分发（稳定版走稳定通道、`-beta.N` 走 beta 通道），可在 LSPosed 管理器「仓库」页直接安装/更新 | 见 [发布指引](docs/publish-to-lsposed-repo.md) |
+| **Release** | 本衍生版的 APK（tag = `版本号-版本名`） | 由本地构建签名后上传，签名密钥固定，可覆盖本仓库的历史版本 |
+| **本地构建** | `bash lsp_module/build.sh` | 需 JDK 17 + `build-tools;35.0.0` + `platforms;android-35`，见下 |
 
-**发版流程已全自动化**（不需要本地改版本号）：
-- **beta**：push 到 `main` 即自动改 versionName（`-beta.<运行号>`）→ 构建签名 → 发 GitHub pre-release → 镜像到官方模块仓库；
-- **稳定版**：Actions → **Release** → Run workflow（`version` 留空则自动把最后一段 +1，例如 `2.6` → `2.7`）。
-  工作流会：改 `versionCode`/`versionName`（含 `BuildInfo.VERSION`）→ 以 `chore(release): vX.Y [skip ci]` 提交回 `main`
-  → 构建签名 → 发 GitHub Release（tag `版本号-版本名`）→ 镜像到官方模块仓库。
+```bash
+# 1. 准备 SDK（已装 Android SDK 可跳过）
+export ANDROID_SDK_ROOT=/path/to/android-sdk   # 需含 build-tools/35.0.0 与 platforms/android-35
 
-构建由 GitHub Actions 完成，签名密钥存放在仓库 Secrets（`SIGNING_KEYSTORE_BASE64` 等），
-因此**每次构建的签名一致**，可以覆盖安装。本地构建默认使用 `lsp_module/module.keystore`（同一把密钥）。
+# 2. 构建（首次会自动生成 lsp_module/module.keystore）
+bash lsp_module/build.sh
+# 产物：lsp_module/edge_download_change-<versionName>.apk
+```
 
-> **一次性配置（可选）**：要在发版时自动把 release 同步到官方模块仓库
-> `Xposed-Modules-Repo/io.github.lswlc33.edge_download_change`，需要一个能写该仓库的 token，
-> 存为仓库 Secret `MODULE_REPO_TOKEN`：
-> ① GitHub → Settings → Developer settings → **Personal access tokens (classic)** → Generate new token，
-> 勾选 `public_repo`，复制；
-> ② 在项目目录执行 `gh secret set MODULE_REPO_TOKEN --repo lswlc33/edge_download_change` 并粘贴。
-> 未配置时工作流会跳过镜像并给出提示（若官方侧本来就会自动同步 release，则无需配置）。
+> **签名密钥务必自行备份**（`lsp_module/module.keystore`，默认口令见 `build.sh`）。
+> 换一把密钥就意味着后续版本无法覆盖安装，用户必须先卸载。
+
+> 上游仓库自带 Nightly / Release 自动化（含版本自增与官方模块仓库镜像），
+> 那套流程绑定的是上游作者的仓库与 Secrets，**本衍生版已移除**，以避免误推到上游或产生无意义的失败构建。
 
 ## 项目结构
 
@@ -142,9 +194,36 @@ edge_download_change/
 └── analysis/                    # Edge 下载链路的分析脚本与结论（含 Via 浏览器参照分析）
 ```
 
-## 许可与致谢
+## 许可与免责声明
 
-- `lsp_module/xposed_api/` 内的源码来自 **libxposed API 102**（`io.github.libxposed:api:102.0.0`，Apache-2.0），
-  仅作编译期依赖，不会打包进 APK；
-- 模块中引用的 Edge / Chromium 类名与字段名归其各自所有者；
-- 本模块仅用于个人设备上的合法用途。
+### 上游归属
+
+| 内容 | 归属 / 许可 |
+|---|---|
+| 本仓库全部代码（含本衍生版的修改） | 上游 [`lswlc33/edge_download_change`](https://github.com/lswlc33/edge_download_change)，作者 **雪中明月（@lswlc33）** |
+| 上游项目的许可 | **上游未提供 LICENSE 文件**（GitHub 未识别到许可协议），依著作权法默认 **保留所有权利**。本仓库**不主张任何额外授权，也不对外授予任何许可** |
+| `lsp_module/xposed_api/`（libxposed API 102，`io.github.libxposed:api:102.0.0`） | Apache-2.0，仅作编译期依赖，不打包进 APK |
+| Edge / Chromium 的类名、字段名、常量 | 归 Microsoft / Chromium 项目及其各自所有者 |
+| Ghost Downloader 3（`XiaoYouChR/Ghost-Downloader-3`） | **GPL-3.0**，作者 **XiaoYouChR**。本模块**不包含、不链接、不分发其任何代码**，仅通过 Android `Intent` 调用已安装的 App |
+
+**因此**：本仓库的存在形式是「个人自用的衍生修改」，不是上游的官方分支，也不构成对上游代码的再许可。
+如果你需要在自己的设备上使用，**更推荐的做法是**：直接使用上游版本，或按本仓库的 diff 自行构建；
+若你希望该功能进入上游，请向上游仓库提交 PR，而不是依赖本衍生版。
+
+**若上游作者对本仓库有任何异议，请开 issue，我会立即归档或删除本仓库及其 Release 产物。**
+
+### 免责声明（Disclaimer）
+
+1. **无任何担保。** 本软件按「现状」（AS IS）提供，不附带任何明示或暗示的担保，包括但不限于适销性、
+   特定用途适用性与不侵权担保。使用本软件造成的任何直接或间接损失（包括设备故障、数据丢失、
+   账号异常、下载内容丢失等），作者不承担任何责任。
+2. **非官方、无关联。** 本仓库与 Microsoft、Edge 浏览器、Chromium 项目、LSPosed 框架、
+   Ghost Downloader 3 及其作者均**无任何隶属、赞助或背书关系**，相关商标归各自所有者。
+3. **高风险环境。** 本模块需要 **root** 与 **LSPosed（libxposed API 102）**，并通过 Hook 修改
+   Edge 的下载链路。root / Xposed 环境可能导致系统不稳定、应用崩溃、无法通过完整性校验、
+   影响银行/支付类应用等，**风险自负**。
+4. **合规使用。** 请仅在**你有权下载**的内容上使用本模块，并遵守所在地区法律法规、
+   目标网站的服务条款与版权规定。**严禁**将本模块用于绕过付费墙、盗版分发、
+   侵犯他人著作权或其他违法用途。因使用者的行为产生的一切法律责任由使用者自行承担。
+5. **无技术支持义务。** Issue / PR 欢迎，但不承诺响应时间与修复。
+6. **可随时停止分发。** 作者可随时修改、停止分发或删除本仓库及其产物，无需事先通知。

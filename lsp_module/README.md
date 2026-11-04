@@ -22,8 +22,12 @@ App 内提供状态、设置与日志三块：
 - 开启拦截（开关，默认开）——关闭后 Edge 恢复原生下载行为，模块不再弹窗；
 - 下载目标——可选「系统下载器（DownloadManager）」或已安装的第三方下载器
   （ADM / IDM / 1DM Lite / ADM Lite / ADM(Vanda) / 迅雷 / FDM / DVGet / Download Navi /
-  Aria2App / Gopeed / AB DM / FluxDown），也可填自定义包名；列表会标注「已安装 / 未安装」。
+  Aria2App / Gopeed / Ghost Downloader / AB DM / FluxDown），也可填自定义包名；列表会标注「已安装 / 未安装」。
   第三方启动失败时会自动回退到系统下载器并写日志。
+  > **Ghost Downloader 3**（`com.xychr.ghostdownloader`）是本衍生版新增项，走 `MODE_SEND`
+  > （`ACTION_SEND` + `text/plain`）。它没有 http(s) 的 `ACTION_VIEW` 过滤器，
+  > 只有 `magnet:` / `ed2k:` / `ftp(s):` / `content:` 与 m3u8/dash/torrent 的 MIME，
+  > 所以用「自定义包名」（固定 `ACTION_VIEW`）对它无效。
 
 **日志**
 - 【查看日志】进入日志页（单色字体、可选中），支持【复制全部】【刷新】【清空】；

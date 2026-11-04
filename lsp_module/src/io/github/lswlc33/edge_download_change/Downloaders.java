@@ -21,6 +21,14 @@ final class Downloaders {
     static final int MODE_SEND = 2;
     /** Explicit component (the downloader's "add download" screen). */
     static final int MODE_EXPLICIT = 3;
+    /**
+     * ACTION_SEND text/plain aimed at one explicit component.
+     *
+     * <p>Used for downloaders that have no http(s) VIEW filter and only take a shared link.
+     * An explicit component needs no intent resolution, so it also works from the injected
+     * (Edge) process, whose package visibility does not include the downloader.
+     */
+    static final int MODE_SEND_EXPLICIT = 4;
 
     static final String ID_SYSTEM = "system";
     static final String ID_CUSTOM = "custom";
@@ -73,6 +81,13 @@ final class Downloaders {
             new Entry("aria2app", "Aria2App", "com.gianlu.aria2app", MODE_EXPLICIT,
                     "com.gianlu.aria2app.LoadingActivity"),
             new Entry("gopeed", "Gopeed", "com.gopeed", MODE_EXPLICIT, "com.gopeed.MainActivity"),
+            // Ghost Downloader 3 (com.xychr.ghostdownloader) declares no VIEW filter for
+            // http(s) URLs - its only entry point for a link is ACTION_SEND text/plain
+            // (the "share to Ghost Downloader" flow, handled by MainActivity). MODE_SEND_EXPLICIT
+            // keeps that action but addresses the component directly, so it resolves from the
+            // injected process too (no dependence on Edge's package visibility).
+            new Entry("ghostdl", "Ghost Downloader", "com.xychr.ghostdownloader", MODE_SEND_EXPLICIT,
+                    "com.xychr.ghostdownloader.MainActivity"),
             new Entry("abdm", "AB DM", "com.abdownloadmanager", MODE_EXPLICIT,
                     "com.abdownloadmanager.android.pages.add.AddDownloadActivity"),
             new Entry("fluxdown", "FluxDown", "com.fluxdown.app", MODE_EXPLICIT,
@@ -142,6 +157,16 @@ final class Downloaders {
             custom.setDataAndType(Uri.parse(url), "*/*");
             custom.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             return custom;
+        }
+        if (entry.mode == MODE_SEND_EXPLICIT && entry.activity != null && entry.pkg != null) {
+            // Explicit component + ACTION_SEND: no resolution against the caller's package
+            // visibility, so this is the reliable way to hand a link to a share-only app.
+            Intent share = new Intent(Intent.ACTION_SEND);
+            share.setType("text/plain");
+            share.putExtra(Intent.EXTRA_TEXT, url);
+            share.setClassName(entry.pkg, entry.activity);
+            share.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            return share;
         }
         if (entry.mode == MODE_SEND) {
             Intent send = new Intent(Intent.ACTION_SEND);
