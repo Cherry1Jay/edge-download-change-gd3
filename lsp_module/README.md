@@ -276,18 +276,20 @@ APK_SUFFIX=-beta-abc1234 bash build.sh      # 可选：自定义文件名后缀
 - 仓库**不包含**密钥文件（见根目录 `.gitignore`）：CI 用 Secrets，本地用 `module.keystore`。
   **请备份密钥**——丢失后已发布版本无法被覆盖安装。
 
-## 持续集成与发布
+## 构建与发布（衍生版）
+
+上游的 `nightly.yml` / `release.yml` 已在本衍生版中**移除**，原因：它们会
+① 自动改版本号并提交回 `main`；② 把构建产物**镜像到上游作者的官方模块仓库**
+`Xposed-Modules-Repo/io.github.lswlc33.edge_download_change`。fork 沿用等于用别人的名义分发，
+所以直接删掉。
+
+现在只有一个工作流：
 
 | 工作流 | 触发 | 产物 |
 |---|---|---|
-| `.github/workflows/nightly.yml` | push 到 `main` / 手动 | **beta 预发布**：自动把 versionName 改成 `<版本>-beta.<运行号>`，以规范 tag `<versionCode>-<版本>-beta.<运行号>` 发布（官方仓库据此归入 beta 通道），并保留最近 10 个 beta |
-| `.github/workflows/release.yml` | 手动（**version 可留空 → 自动 +1**） | 自动递增 versionCode/versionName → 提交回 main → 构建签名 → GitHub Release（tag `<versionCode>-<versionName>`）→ 镜像到官方模块仓库（需 `MODULE_REPO_TOKEN`） |
+| `.github/workflows/build.yml` | push / PR / 手动 | 校验能编译通过，上传构建产物为 workflow artifact（**不发 Release、不镜像任何仓库**） |
 
-发版步骤（两种都无需手动改版本号）：
-- **beta**：push 到 `main`，工作流把 versionName 改成 `<版本>-beta.<运行号>` 后发布；
-- **稳定版**：Actions → **Release** → Run workflow，`version` 留空即自动把最后一段 +1（`2.6` → `2.7`），
-  工作流会改版本、提交回 main（带 `[skip ci]`）、构建签名、发 Release，并在配置了
-  `MODULE_REPO_TOKEN` 时镜像到官方模块仓库 `Xposed-Modules-Repo/io.github.lswlc33.edge_download_change`。
+发布方式：本地 `bash build.sh` 编译 → 手动在 GitHub 上传到 Release。
+本地默认用 `lsp_module/module.keystore` 签名，**这把密钥请自行备份**，丢了之后新版本就无法覆盖安装。
 
-发布到 LSPosed 官方仓库的完整流程见根目录 [`docs/publish-to-lsposed-repo.md`](../docs/publish-to-lsposed-repo.md)。
 另见仓库根目录的 `README.md`（中文说明）/ `README.en.md`（English）与 `analysis/README.md`（hook 目标的推导过程）。
