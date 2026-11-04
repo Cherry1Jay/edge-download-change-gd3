@@ -57,6 +57,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // The hooked browser keeps its own copy of the settings; resend them whenever this
+        // screen becomes visible so a reinstall or a restored backup cannot leave the two
+        // sides out of sync.
+        SettingsPush.push(this);
         refresh();
     }
 

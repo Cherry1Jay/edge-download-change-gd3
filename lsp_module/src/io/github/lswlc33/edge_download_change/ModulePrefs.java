@@ -25,6 +25,7 @@ final class ModulePrefs {
 
     static void setEnabled(Context context, boolean enabled) {
         settings(context).edit().putBoolean(BuildInfo.KEY_ENABLED, enabled).apply();
+        SettingsPush.push(context);
     }
 
     static String downloader(Context context) {
@@ -33,6 +34,7 @@ final class ModulePrefs {
 
     static void setDownloader(Context context, String id) {
         settings(context).edit().putString(BuildInfo.KEY_DOWNLOADER, id).apply();
+        SettingsPush.push(context);
     }
 
     static String customPackage(Context context) {
@@ -41,6 +43,7 @@ final class ModulePrefs {
 
     static void setCustomPackage(Context context, String pkg) {
         settings(context).edit().putString(BuildInfo.KEY_CUSTOM_PACKAGE, pkg == null ? "" : pkg).apply();
+        SettingsPush.push(context);
     }
 
     static void recordStatus(Context context, String process, String framework, String state) {

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.lswlc33.edge_download_change"
-    android:versionCode="17"
-    android:versionName="2.12-gd3.2">
+    android:versionCode="18"
+    android:versionName="2.12-gd3.3">
 
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
 
@@ -28,6 +28,9 @@
         <package android:name="com.abdownloadmanager" />
         <package android:name="com.fluxdown.app" />
         <package android:name="org.lsposed.manager" />
+        <!-- The browser this module hooks: needed so the settings push can address it
+             by package name (the reverse direction is blocked by package visibility). -->
+        <package android:name="com.microsoft.emmx" />
     </queries>
 
     <application

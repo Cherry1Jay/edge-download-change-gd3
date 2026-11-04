@@ -1,8 +1,12 @@
 package io.github.lswlc33.edge_download_change;
 
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 
@@ -16,9 +20,17 @@ import io.github.libxposed.api.XposedInterface;
 /**
  * Injected side channel to the module app.
  *
- * Settings are read live from the app's ContentProvider (falling back to the framework's
- * read-only remote preferences when the provider cannot be reached). Status and log lines
- * are pushed back through the same provider and end up in the app's log view.
+ * Settings arrive in three independent ways, in order of reliability on Android 11+:
+ *
+ * <ol>
+ *   <li><b>Local cache</b> - the values last pushed by the module app, stored in the browser's
+ *       own data directory. No IPC at all, so it always works, including on a cold start.</li>
+ *   <li><b>Settings broadcast</b> - the module app pushes on every change (and on every resume
+ *       of its UI); received by the receiver registered below.</li>
+ *   <li><b>ContentProvider</b> - only reachable if the browser can see this module's package,
+ *       which Android 11+ normally forbids for non-system apps; used as a best-effort
+ *       refresh, and it is also how log lines and status are reported back.</li>
+ * </ol>
  */
 final class RemoteSettings {
 
@@ -45,6 +57,8 @@ final class RemoteSettings {
     private static volatile String sPendingStateEvent;
     private static volatile String sPendingStateDetail;
     private static volatile long sProviderBrokenAt;
+    private static volatile boolean sCacheLoaded;
+    private static volatile boolean sReceiverRegistered;
     /** Retry the provider after this long even if it failed before (app may have been started). */
     private static final long PROVIDER_RETRY_MS = 30_000L;
 
@@ -75,24 +89,31 @@ final class RemoteSettings {
     private static void refreshIfStale() {
         if (SystemClock.elapsedRealtime() - sFetchedAt < CACHE_MS) return;
         sFetchedAt = SystemClock.elapsedRealtime();
-        // Fast path (no IPC): the framework's remote preferences, which mirror the app's
-        // own SharedPreferences file. Read-only in hooked apps - exactly our direction.
+        // 1. Local cache: instant, no IPC, survives a browser restart.
+        loadCache();
+        registerSettingsReceiver();
+        // 2. The framework's remote preferences, which mirror the module app's own
+        // SharedPreferences file. Only populated when LSPosed redirects that file, so it is
+        // treated as authoritative only when it actually carries a value.
         boolean loaded = false;
         try {
             XposedInterface api = DownloadHooks.api();
             if (api != null) {
                 SharedPreferences prefs = api.getRemotePreferences(BuildInfo.PREFS_SETTINGS);
-                sEnabled = prefs.getBoolean(BuildInfo.KEY_ENABLED, sEnabled);
-                String downloader = prefs.getString(BuildInfo.KEY_DOWNLOADER, sDownloader);
-                if (downloader != null && downloader.length() > 0) sDownloader = downloader;
-                String custom = prefs.getString(BuildInfo.KEY_CUSTOM_PACKAGE, sCustomPackage);
-                if (custom != null) sCustomPackage = custom;
-                loaded = true;
+                if (prefs.contains(BuildInfo.KEY_DOWNLOADER)) {
+                    sEnabled = prefs.getBoolean(BuildInfo.KEY_ENABLED, sEnabled);
+                    String downloader = prefs.getString(BuildInfo.KEY_DOWNLOADER, sDownloader);
+                    if (downloader != null && downloader.length() > 0) sDownloader = downloader;
+                    String custom = prefs.getString(BuildInfo.KEY_CUSTOM_PACKAGE, sCustomPackage);
+                    if (custom != null) sCustomPackage = custom;
+                    loaded = true;
+                    saveCache();
+                }
             }
         } catch (Throwable ignored) {
         }
-        // Calibrate through the provider off the main thread; the answer also carries the
-        // settings on every log/heartbeat report, so changes converge quickly.
+        // 3. Calibrate through the provider off the main thread; the answer also carries the
+        // settings on every log/heartbeat report, so changes converge quickly when reachable.
         if (!loaded || SystemClock.elapsedRealtime() - sLastAsyncRefresh > CACHE_MS) {
             sLastAsyncRefresh = SystemClock.elapsedRealtime();
             Bg.run(new Runnable() {
@@ -108,6 +129,75 @@ final class RemoteSettings {
         }
     }
 
+    // ------------------------------------------------------------------ local cache
+
+    private static void loadCache() {
+        if (sCacheLoaded) return;
+        Context context = DownloadHooks.application();
+        if (context == null) return;
+        sCacheLoaded = true;
+        try {
+            SharedPreferences prefs = context.getSharedPreferences(
+                    BuildInfo.PREFS_CACHE, Context.MODE_PRIVATE);
+            sEnabled = prefs.getBoolean("enabled", sEnabled);
+            String downloader = prefs.getString("downloader", null);
+            if (downloader != null && downloader.length() > 0) sDownloader = downloader;
+            String custom = prefs.getString("custom", null);
+            if (custom != null) sCustomPackage = custom;
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void saveCache() {
+        Context context = DownloadHooks.application();
+        if (context == null) return;
+        try {
+            context.getSharedPreferences(BuildInfo.PREFS_CACHE, Context.MODE_PRIVATE).edit()
+                    .putBoolean("enabled", sEnabled)
+                    .putString("downloader", sDownloader)
+                    .putString("custom", sCustomPackage)
+                    .apply();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * Listens for the module app's settings push. Registered on Edge's application context
+     * (exported, because the sender is another app) and re-registered lazily in case the first
+     * refresh happened before a context existed.
+     */
+    private static void registerSettingsReceiver() {
+        if (sReceiverRegistered) return;
+        Context context = DownloadHooks.application();
+        if (context == null) return;
+        sReceiverRegistered = true;
+        try {
+            BroadcastReceiver receiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context ctx, Intent intent) {
+                    Bundle values = new Bundle();
+                    values.putBoolean("enabled", intent.getBooleanExtra("enabled", sEnabled));
+                    String downloader = intent.getStringExtra("downloader");
+                    if (downloader != null) values.putString("downloader", downloader);
+                    String custom = intent.getStringExtra("custom");
+                    if (custom != null) values.putString("custom", custom);
+                    applySettings(values);
+                    sFetchedAt = SystemClock.elapsedRealtime();
+                    DownloadHooks.log(4, "settings pushed by module app: " + sDownloader);
+                }
+            };
+            IntentFilter filter = new IntentFilter(BuildInfo.ACTION_SETTINGS);
+            if (Build.VERSION.SDK_INT >= 33) {
+                context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
+            } else {
+                context.registerReceiver(receiver, filter);
+            }
+        } catch (Throwable t) {
+            sReceiverRegistered = false;
+            DownloadHooks.log(5, "settings receiver registration failed", t);
+        }
+    }
+
     private static void applySettings(Bundle values) {
         if (values == null) return;
         sEnabled = values.getBoolean("enabled", sEnabled);
@@ -115,6 +205,7 @@ final class RemoteSettings {
         if (downloader != null && downloader.length() > 0) sDownloader = downloader;
         String custom = values.getString("custom");
         if (custom != null) sCustomPackage = custom;
+        saveCache();
     }
 
     private static Bundle queryProvider() {
