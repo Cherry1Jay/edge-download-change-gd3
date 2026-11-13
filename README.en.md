@@ -218,3 +218,22 @@ deleted along with its release artifacts, immediately.**
    redistribute pirated material or infringe copyright. You are solely responsible for your actions.
 5. **No support obligation.** Issues and PRs are welcome, but no response time or fix is promised.
 6. **Distribution may stop at any time** without notice.
+
+<!-- donate:start -->
+---
+
+## Support the author
+
+This project is **completely free** — no paid tier, no feature gating. Use, modify and redistribute it under the terms of its license.
+
+If it saved you some time, a **voluntary tip** is very welcome. Not tipping changes nothing: every feature stays available.
+
+<table>
+  <tr>
+    <td align="center"><b>Alipay</b><br>
+      <img src="assets/donate/alipay.jpg" width="240" alt="Alipay QR code"></td>
+    <td align="center"><b>WeChat Pay</b><br>
+      <img src="assets/donate/wechat.jpg" width="240" alt="WeChat Pay QR code"></td>
+  </tr>
+</table>
+<!-- donate:end -->
